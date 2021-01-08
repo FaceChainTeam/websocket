@@ -469,10 +469,13 @@ func (c *Conn) beginMessage(mw *messageWriter, messageType int) error {
 	// Close previous writer if not already closed by the application. It's
 	// probably better to return an error in this situation, but we cannot
 	// change this without breaking existing applications.
+
+	c.writeErrMu.Lock()
 	if c.writer != nil {
 		c.writer.Close()
 		c.writer = nil
 	}
+	c.writeErrMu.Unlock()
 
 	if !isControl(messageType) && !isData(messageType) {
 		return errBadWriteOpCode
@@ -536,7 +539,9 @@ func (w *messageWriter) endMessage(err error) error {
 	}
 	c := w.c
 	w.err = err
+	c.writeErrMu.Lock()
 	c.writer = nil
+	c.writeErrMu.Unlock()
 	if c.writePool != nil {
 		c.writePool.Put(writePoolData{buf: c.writeBuf})
 		c.writeBuf = nil
