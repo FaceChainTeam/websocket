@@ -252,8 +252,9 @@ type Conn struct {
 	writer        io.WriteCloser // the current writer returned to the application
 	isWriting     bool           // for best-effort concurrent write detection
 
-	writeErrMu sync.Mutex
-	writeErr   error
+	writeErrMu     sync.Mutex
+	ovisionRWMutex sync.RWMutex
+	writeErr       error
 
 	enableWriteCompression bool
 	compressionLevel       int
@@ -469,13 +470,12 @@ func (c *Conn) beginMessage(mw *messageWriter, messageType int) error {
 	// Close previous writer if not already closed by the application. It's
 	// probably better to return an error in this situation, but we cannot
 	// change this without breaking existing applications.
-
-	c.writeErrMu.Lock()
+	c.ovisionRWMutex.RLock()
 	if c.writer != nil {
 		c.writer.Close()
 		c.writer = nil
 	}
-	c.writeErrMu.Unlock()
+	c.ovisionRWMutex.RUnlock()
 
 	if !isControl(messageType) && !isData(messageType) {
 		return errBadWriteOpCode
@@ -539,9 +539,9 @@ func (w *messageWriter) endMessage(err error) error {
 	}
 	c := w.c
 	w.err = err
-	c.writeErrMu.Lock()
+	c.ovisionRWMutex.Lock()
 	c.writer = nil
-	c.writeErrMu.Unlock()
+	c.ovisionRWMutex.Unlock()
 	if c.writePool != nil {
 		c.writePool.Put(writePoolData{buf: c.writeBuf})
 		c.writeBuf = nil
@@ -616,7 +616,9 @@ func (w *messageWriter) flushFrame(final bool, extra []byte) error {
 	}
 	c.isWriting = true
 
+	c.ovisionRWMutex.RLock()
 	err := c.write(w.frameType, c.writeDeadline, c.writeBuf[framePos:w.pos], extra)
+	c.ovisionRWMutex.RUnlock()
 
 	if !c.isWriting {
 		return errors.New("concurrent write to websocket connection")
@@ -783,7 +785,9 @@ func (c *Conn) WriteMessage(messageType int, data []byte) error {
 // all future writes will return an error. A zero value for t means writes will
 // not time out.
 func (c *Conn) SetWriteDeadline(t time.Time) error {
+	c.ovisionRWMutex.Lock()
 	c.writeDeadline = t
+	c.ovisionRWMutex.Unlock()
 	return nil
 }
 
